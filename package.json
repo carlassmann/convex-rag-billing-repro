@@ -1,0 +1,14 @@
+{
+  "name": "convex-rag-billing-repro",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "repro": "bun repro.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.118",
+    "@convex-dev/rag": "^0.7.9",
+    "ai": "^7.0.173",
+    "convex": "^1.50.0"
+  }
+}
