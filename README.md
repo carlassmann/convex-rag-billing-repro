@@ -5,6 +5,10 @@
 in the component**. In this repro, all 5,001 vectors are billed, whichever
 namespace is searched.
 
+Convex's own engine seems to narrow the search to the namespace, and Convex
+already bills text search only for what its filter matches. Vector search
+billing ignores the filter ([details](#convex-narrows-the-search-but-not-the-bill)).
+
 Search cost is therefore *searches × total index size*. If every tenant shares
 one RAG component, both factors grow with the number of tenants, so the
 search bill grows quadratically.
@@ -33,6 +37,38 @@ regardless of which `filterFields` it uses"
 (https://docs.convex.dev/search/vector-search). `@convex-dev/rag` keeps every
 namespace in one table per dimension (`vectors_1536`), with one vector index,
 and filters by namespace inside it.
+
+## Convex narrows the search, but not the bill
+
+Convex's backend is open source. Read at commit
+[`e5a8148`](https://github.com/get-convex/convex-backend/tree/e5a8148480f2b71634d426d2d773a862117b1d47),
+it seems the search engine does narrow a search to the namespace, and only
+billing ignores that.
+
+**The search narrows.** Convex stores vector indexes as Qdrant segments with a
+payload index on the filter fields
+([`qdrant_segments.rs#L166`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/vector/src/qdrant_segments.rs#L166)),
+and passes the search's filters, rag's namespace among them, to Qdrant
+([`qdrant_index.rs#L272`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/vector/src/qdrant_index.rs#L272)).
+It sets Qdrant's `full_scan_threshold`
+([`qdrant_segments.rs#L125`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/vector/src/qdrant_segments.rs#L125)).
+When a filter matches fewer vectors than that threshold, Qdrant's query
+planner compares only the matching vectors instead of walking the whole graph
+(https://qdrant.tech/documentation/concepts/indexing/). So the work of
+searching a small namespace scales with the namespace.
+
+**The bill doesn't.** The billed size is taken from the index's metadata
+before the search runs, without the query or its filters
+([`database.rs#L2741`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/database/src/database.rs#L2741)).
+It is every non-deleted vector in every compacted segment
+([`index_config.rs#L185`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/common/src/bootstrap_model/index/index_config.rs#L185)),
+at dimensions × 4 bytes per vector
+([`segment.rs#L92`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/common/src/bootstrap_model/index/vector_index/segment.rs#L92)).
+
+**Text search already bills only what the filter matches.** It charges each
+segment's size × matching documents ÷ all documents
+([`search/src/lib.rs#L203`](https://github.com/get-convex/convex-backend/blob/e5a8148480f2b71634d426d2d773a862117b1d47/crates/search/src/lib.rs#L203)).
+Convex has filter-aware billing; vector search just doesn't use it.
 
 ## Run it
 
